@@ -25,6 +25,7 @@ its history is in `~/workspace/paypercall/WORKER-DEPLOY.md`)
 |---|---|---|
 | `ppc-seller-ifmvubms.testnet-2` | Token Safety Scan — NEAR tokens | `input.contract` — NEAR token contract ID |
 | `ppc-seller-ifmvubms.testnet-3` | NEAR Wallet X-Ray | `input.account` — any NEAR account ID |
+| `ppc-seller-ifmvubms.testnet-4` | NEAR Name Checker | `input.account` — NEAR account name to check |
 
 Registered by `scripts/register-services.mjs` (idempotent; it also
 deactivated the Phase A throwaway listing, `…-1`, which stays on-chain
@@ -55,6 +56,11 @@ with `active: false` and is never shown).
     storage used (+approx. storage cost), contract code, creation time
     and transaction count (NearBlocks, best effort), one-line summary.
     `.testnet` accounts read testnet, everything else reads mainnet.
+  - `/paid/name-check` — account-name availability: `view_account` on
+    mainnet (`.near` etc.) or testnet (`.testnet`); returns
+    `exists`/`available` + `checked_at`. A missing account is free, not
+    an error. Pure RPC — no indexer dependency, so it never degrades on
+    the live Worker the way NearBlocks fields do.
 - Build + pre-deploy gate:
   `cd worker && npm run build && node test-local.mjs` → must print
   `LOCAL E2E GREEN` (runs the exact bundle in Node with real testnet

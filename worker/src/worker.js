@@ -6,9 +6,10 @@
 //     PayPerCallRegistry at paypercall-dev-t34qd7c9.testnet (NEAR testnet
 //     RPC call_function get_listings, short in-memory cache). The chain is
 //     the source of truth — there is no worker-side listing creation.
-//   * Two real services, both served in-process after a verified payment:
+//   * Three real services, both served in-process after a verified payment:
 //       - /paid/token-scan   NEAR Token Safety Scan (NEAR mainnet reads)
 //       - /paid/wallet-xray  NEAR Wallet X-Ray (mainnet or testnet reads)
+//       - /paid/name-check   NEAR Name Checker (mainnet or testnet reads)
 //   * Purchases persist in a Cloudflare KV namespace when the PURCHASES
 //     binding is present; otherwise they fall back to in-memory Maps
 //     (demo-grade, per-isolate). Check /api/health for the live mode.
@@ -31,6 +32,7 @@ const WORKER_ORIGIN = "https://paypercall-v2.odemakindeezekiel5.workers.dev";
 const REGISTRY_CONTRACT = "paypercall-dev-t34qd7c9.testnet";
 const TOKEN_SCAN_PATH = "/paid/token-scan";
 const WALLET_XRAY_PATH = "/paid/wallet-xray";
+const NAME_CHECK_PATH = "/paid/name-check";
 const EXPLORER_TX = "https://testnet.nearblocks.io/txns/";
 const NO_CODE_HASH = "11111111111111111111111111111111";
 
@@ -845,6 +847,58 @@ async function walletXray(accountIdRaw) {
 }
 
 // ---------------------------------------------------------------------------
+// NEAR Name Checker: is a NEAR account name taken or free?
+// Reads view_account on mainnet (.near etc.) or testnet (.testnet),
+// mirroring walletXray's network pick. A missing account is a clean
+// "free" result, not an error — and no indexer is involved, so this
+// never degrades on the live Worker the way NearBlocks fields do.
+// Returns { status, body } like the other services.
+// ---------------------------------------------------------------------------
+async function nameCheck(accountIdRaw) {
+  const accountId = typeof accountIdRaw === "string" ? accountIdRaw.trim() : "";
+  if (!isNearAccountLoose(accountId)) {
+    return {
+      status: 400,
+      body: {
+        error:
+          "invalid NEAR account ID — expected a lowercase account name like alice.near or bob.testnet (2-64 chars, letters, digits, -, _, .)",
+        account: accountIdRaw ?? null,
+      },
+    };
+  }
+  const network = accountId.endsWith(".testnet") ? "testnet" : "mainnet";
+  const rpcUrl = network === "testnet" ? RPC_URL : MAINNET_RPC_URL;
+
+  let exists;
+  try {
+    await queryRpc(rpcUrl, "view_account", { account_id: accountId });
+    exists = true;
+  } catch (e) {
+    if (isUnknownAccountError(e)) {
+      exists = false;
+    } else {
+      return {
+        status: 502,
+        body: { error: "NEAR " + network + " RPC is unavailable right now — try again in a minute", account: accountId, network },
+      };
+    }
+  }
+
+  return {
+    status: 200,
+    body: {
+      account: accountId,
+      chain: "near",
+      network,
+      exists,
+      available: !exists,
+      source: "NEAR " + network + " RPC (view_account)",
+      checked_at: new Date().toISOString(),
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Input handling + serving
 // ---------------------------------------------------------------------------
 
@@ -852,6 +906,8 @@ const isScanListing = (listing) =>
   typeof listing.endpoint_url === "string" && listing.endpoint_url.includes(TOKEN_SCAN_PATH);
 const isXrayListing = (listing) =>
   typeof listing.endpoint_url === "string" && listing.endpoint_url.includes(WALLET_XRAY_PATH);
+const isNameCheckListing = (listing) =>
+  typeof listing.endpoint_url === "string" && listing.endpoint_url.includes(NAME_CHECK_PATH);
 
 function sanitizeInput(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return {};
@@ -890,6 +946,21 @@ async function validateListingInput(listing, input) {
     if (pre.status !== 200) return pre;
     return null;
   }
+  if (isNameCheckListing(listing)) {
+    const account = input.account;
+    if (!account) {
+      return { status: 400, body: { error: "this endpoint needs input.account — the NEAR account name to check, e.g. alice.near or bob.testnet" } };
+    }
+    if (!isNearAccountLoose(account)) {
+      return { status: 400, body: { error: "invalid NEAR account ID — expected a lowercase account name like alice.near", account } };
+    }
+    // nameCheck returns 200 for taken AND free names (both are valid
+    // results), so a pre-flight pass here only fails on bad input or
+    // an unavailable RPC — never on a name being taken.
+    const pre = await nameCheck(account);
+    if (pre.status !== 200) return pre;
+    return null;
+  }
   return null;
 }
 
@@ -906,6 +977,9 @@ async function serveCall(listing, input) {
   }
   if (url.pathname === WALLET_XRAY_PATH) {
     return walletXray(url.searchParams.get("account"));
+  }
+  if (url.pathname === NAME_CHECK_PATH) {
+    return nameCheck(url.searchParams.get("account"));
   }
 
   const controller = new AbortController();
@@ -1123,6 +1197,10 @@ export default {
       }
       if (req.method === "GET" && path === WALLET_XRAY_PATH) {
         const { status, body } = await walletXray(url.searchParams.get("account"));
+        return json(body, status);
+      }
+      if (req.method === "GET" && path === NAME_CHECK_PATH) {
+        const { status, body } = await nameCheck(url.searchParams.get("account"));
         return json(body, status);
       }
       return json({ error: "not found" }, 404);

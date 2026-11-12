@@ -57,6 +57,7 @@ export const FRONTEND_HTML = `<!doctype html>
 <script>
 var SAMPLE_TOKEN = "usdt.tether-token.near";
 var SAMPLE_ACCOUNT = "wrap.near";
+var SAMPLE_NAME = "satoshi.near";
 
 var api = function (p, opts) {
   return fetch(p, opts).then(function (r) {
@@ -77,6 +78,7 @@ function listingType(l) {
   var u = l.endpoint_url || "";
   if (u.indexOf("/paid/token-scan") !== -1) return "scan";
   if (u.indexOf("/paid/wallet-xray") !== -1) return "xray";
+  if (u.indexOf("/paid/name-check") !== -1) return "namecheck";
   return "generic";
 }
 
@@ -153,6 +155,21 @@ function renderXrayReport(body) {
   return html;
 }
 
+function renderNameCheckReport(body) {
+  var taken = body.exists === true;
+  var html = "<h4>NEAR Name Checker</h4>" +
+    "<p><span class='badge " + (taken ? "high" : "low") + "'>" + (taken ? "TAKEN" : "AVAILABLE") + "</span>" +
+    " &nbsp;<code>" + escapeHtml(body.account || "") + "</code></p>" +
+    "<table class='report'>" +
+    row("Account", "<code>" + escapeHtml(body.account || "") + "</code>") +
+    row("Network", "NEAR " + escapeHtml(body.network || "")) +
+    row("Exists", taken ? "Yes — this name is taken" : "No — this name is free") +
+    row("Checked at", na(body.checked_at ? String(body.checked_at).slice(0, 19).replace("T", " ") + " UTC" : null)) +
+    "</table>" +
+    "<p class='muted'>Source: " + escapeHtml(body.source || "NEAR RPC") + "</p>";
+  return html;
+}
+
 function renderResult(r) {
   var body = r && r.result ? r.result.body : null;
   var head = "";
@@ -166,6 +183,10 @@ function renderResult(r) {
   }
   if (body && typeof body.summary === "string" && body.account) {
     return head + renderXrayReport(body) +
+      "<details><summary class='muted'>Raw JSON</summary><pre>" + escapeHtml(JSON.stringify(body, null, 2)) + "</pre></details>";
+  }
+  if (body && typeof body.available === "boolean" && typeof body.exists === "boolean") {
+    return head + renderNameCheckReport(body) +
       "<details><summary class='muted'>Raw JSON</summary><pre>" + escapeHtml(JSON.stringify(body, null, 2)) + "</pre></details>";
   }
   var status = r && r.result ? r.result.status : "?";
@@ -202,6 +223,10 @@ function buildCard(l) {
     html += "<label class='muted'>NEAR account ID to X-ray</label>" +
       "<input data-address value='" + SAMPLE_ACCOUNT + "' spellcheck='false' />" +
       "<p class='muted'>Any mainnet (.near) or testnet (.testnet) account — try <code>wrap.near</code> or your own account.</p>";
+  } else if (type === "namecheck") {
+    html += "<label class='muted'>NEAR account name to check</label>" +
+      "<input data-address value='" + SAMPLE_NAME + "' spellcheck='false' />" +
+      "<p class='muted'>Any .near or .testnet name — try <code>satoshi.near</code> (taken) or a name you hope is free.</p>";
   }
   html += "<button data-demo class='demo'>&#9889; One-tap demo buy</button>" +
     "<div data-demoout></div>" +

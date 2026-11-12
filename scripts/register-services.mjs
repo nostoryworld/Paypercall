@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Register the two real PayPerCall services as on-chain listings in the
+// Register the three real PayPerCall services as on-chain listings in the
 // PayPerCallRegistry contract (NEAR testnet), signed by the demo seller.
 // Also deactivates the Phase A throwaway listing (its seller is the dev
 // account, which owns the registry deploy).
@@ -43,6 +43,13 @@ const SERVICES = [
     description:
       "Snapshot of any NEAR account: existence, balance, storage used, deployed contract code, creation and recent activity (best effort from public indexers), plus a one-line summary. Input: the account ID (mainnet .near or testnet .testnet).",
     endpoint_url: V2_ORIGIN + "/paid/wallet-xray",
+    price_yocto: PRICE_YOCTO,
+  },
+  {
+    name: "NEAR Name Checker",
+    description:
+      "Check whether a NEAR account name is taken or free: reads the account live from NEAR RPC (mainnet .near or testnet .testnet) and reports exists/available with the check time. A missing account is free, not an error. Input: the NEAR account name to check.",
+    endpoint_url: V2_ORIGIN + "/paid/name-check",
     price_yocto: PRICE_YOCTO,
   },
 ];

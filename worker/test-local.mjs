@@ -1,7 +1,7 @@
 // Local pre-deploy test for PayPerCall v2: runs the EXACT bundled worker in
 // Node (shimmed Workers runtime) including REAL NEAR testnet transfers,
-// on-chain registry reads, NEAR mainnet token scans and wallet X-rays
-// (read-only). Demo-buyer secrets are read from the prototype's
+// on-chain registry reads, NEAR mainnet token scans, wallet X-rays and
+// name checks (read-only). Demo-buyer secrets are read from the prototype's
 // .demo-keys.json (0600) and injected as env — the same names the Worker
 // secrets use in production. Purchases storage runs in "memory" mode here
 // (no KV binding in Node); production uses KV — see ../README.md.
@@ -142,17 +142,24 @@ console.log("== GET /api/health ==");
 }
 
 console.log("== GET /api/listings (from chain) ==");
-let scanListing, xrayListing;
+let scanListing, xrayListing, nameListing;
 {
   const { status, data } = await call("GET", "/api/listings");
   check("status 200", status === 200);
   check("at least 2 listings", Array.isArray(data) && data.length >= 2, Array.isArray(data) && String(data.length));
   scanListing = Array.isArray(data) && data.find((l) => l.name.includes("Token Safety Scan"));
   xrayListing = Array.isArray(data) && data.find((l) => l.name.includes("Wallet X-Ray"));
+  nameListing = Array.isArray(data) && data.find((l) => l.name.includes("Name Checker"));
   check("scan listing from chain", !!scanListing, scanListing && scanListing.id);
   check("xray listing from chain", !!xrayListing, xrayListing && xrayListing.id);
   check("scan id is the seller's on-chain id", !!scanListing && scanListing.id === SELLER + "-2", scanListing && scanListing.id);
   check("xray id is the seller's on-chain id", !!xrayListing && xrayListing.id === SELLER + "-3", xrayListing && xrayListing.id);
+  if (nameListing) {
+    check("name id is the seller's on-chain id", nameListing.id === SELLER + "-4", nameListing.id);
+    check("name price 0.001 NEAR", nameListing.price_near === "0.001");
+  } else {
+    console.log("  (name listing not on-chain yet — skipping name listing checks)");
+  }
   check("prices mapped to 0.001 NEAR", !!scanListing && scanListing.price_near === "0.001" && !!xrayListing && xrayListing.price_near === "0.001");
   check("no example.com endpoints", Array.isArray(data) && !data.some((l) => (l.endpoint_url || "").includes("example.com")));
   check("no Phase A test listing", Array.isArray(data) && !data.some((l) => /Phase A/.test(l.name)));
@@ -210,6 +217,27 @@ console.log("== GET /paid/wallet-xray (fake + garbage) ==");
   check("garbage -> clean 400", junk.status === 400, JSON.stringify(junk.data).slice(0, 160));
 }
 
+console.log("== GET /paid/name-check (wrap.near taken, direct) ==");
+{
+  const { status, data } = await call("GET", "/paid/name-check?account=" + WRAP);
+  check("status 200", status === 200, JSON.stringify(data).slice(0, 200));
+  check("account echoed", data && data.account === WRAP);
+  check("network mainnet", data && data.network === "mainnet");
+  check("exists true", data && data.exists === true);
+  check("available false", data && data.available === false);
+  check("checked_at present", !!data && typeof data.checked_at === "string");
+}
+
+console.log("== GET /paid/name-check (free name, testnet, garbage) ==");
+{
+  const free = await call("GET", "/paid/name-check?account=definitely-not-a-real-name-xyz123.near");
+  check("free name -> 200 exists false", free.status === 200 && free.data && free.data.exists === false && free.data.available === true, JSON.stringify(free.data).slice(0, 160));
+  const tst = await call("GET", "/paid/name-check?account=" + SELLER);
+  check("testnet seller exists", tst.status === 200 && tst.data && tst.data.exists === true && tst.data.network === "testnet", JSON.stringify(tst.data).slice(0, 160));
+  const junk = await call("GET", "/paid/name-check?account=NO WAY!!");
+  check("garbage -> clean 400", junk.status === 400, JSON.stringify(junk.data).slice(0, 160));
+}
+
 console.log("== POST /api/demo/buy (scan, USDT) — REAL testnet transfer ==");
 {
   const { status, data } = await call("POST", "/api/demo/buy", {
@@ -244,6 +272,21 @@ console.log("== POST /api/demo/buy (garbage inputs spend nothing) ==");
   check("scan garbage -> 400", bad1.status === 400 && !bad1.data.tx_hash);
   const bad2 = await call("POST", "/api/demo/buy", { listing_id: xrayListing.id, input: { account: FAKE } });
   check("xray nonexistent -> 404", bad2.status === 404 && !bad2.data.tx_hash, "status=" + bad2.status);
+}
+
+console.log("== POST /api/demo/buy (name-check, wrap.near taken) — REAL testnet transfer ==");
+if (nameListing) {
+  const { status, data } = await call("POST", "/api/demo/buy", {
+    listing_id: nameListing.id,
+    input: { account: WRAP },
+  });
+  check("status 200", status === 200, JSON.stringify(data).slice(0, 200));
+  check("real tx hash", !!data.tx_hash && /^[A-Za-z0-9]{43,44}$/.test(data.tx_hash), data.tx_hash);
+  const rep = data.result && data.result.body;
+  check("name check wrap.near taken", !!rep && rep.account === WRAP && rep.exists === true && rep.available === false);
+  console.log("  tx:", data.tx_hash, data.explorer_url || "");
+} else {
+  console.log("  (name listing not on-chain yet — skipping name-check demo buy)");
 }
 
 console.log("== Manual flow: purchase (xray, seller account) -> pay -> claim (REAL) ==");
