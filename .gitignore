@@ -1,0 +1,7 @@
+.keys/
+.demo-keys.json
+*.json.key
+target/
+dist/
+node_modules/
+worker/node_modules
